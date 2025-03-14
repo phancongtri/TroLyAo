@@ -6,8 +6,9 @@ const { Client } = require('pg');
 // Kết nối PostgreSQL trên Railway
 const db = new Client({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
+    ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false }
 });
+
 db.connect()
     .then(() => console.log('✅ Đã kết nối PostgreSQL'))
     .catch(err => console.error('❌ Lỗi kết nối PostgreSQL:', err));
@@ -42,42 +43,89 @@ bot.on('text', async (ctx) => {
     ctx.reply('✅ Công việc đã được thêm!');
 });
 
-// 📌 **Xem danh sách công việc**
+// 📌 **Hiển thị danh sách công việc với Inline Keyboard**
 bot.command('list', async (ctx) => {
     const userId = ctx.message.from.id;
-    const result = await db.query('SELECT task FROM tasks WHERE user_id = $1', [userId]);
+    const result = await db.query('SELECT id, task FROM tasks WHERE user_id = $1', [userId]);
 
     if (result.rows.length > 0) {
-        const tasks = result.rows.map(row => `- ${row.task}`).join('\n');
-        ctx.reply(`📋 Danh sách công việc:\n${tasks}`);
+        result.rows.forEach(row => {
+            ctx.reply(
+                `📌 ${row.task}`,
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('✏ Chỉnh sửa', `edit_${row.id}`)],
+                    [Markup.button.callback('❌ Xóa', `delete_${row.id}`)],
+                    [Markup.button.callback('🔄 Lặp lại', `repeat_${row.id}`)]
+                ])
+            );
+        });
     } else {
         ctx.reply('📭 Không có công việc nào.');
     }
 });
 
-// 📌 **Xóa công việc mới nhất**
-bot.command('delete', async (ctx) => {
-    const userId = ctx.message.from.id;
-    const result = await db.query('DELETE FROM tasks WHERE user_id = $1 RETURNING *', [userId]);
+// 📌 **Xóa công việc**
+bot.action(/^delete_(\d+)$/, async (ctx) => {
+    const taskId = ctx.match[1];
+    await db.query('DELETE FROM tasks WHERE id = $1', [taskId]);
+    ctx.reply('✅ Công việc đã được xóa!');
+});
 
-    if (result.rowCount > 0) {
-        ctx.reply('❌ Công việc cuối cùng đã bị xóa!');
-    } else {
-        ctx.reply('⚠️ Không có công việc nào để xóa.');
-    }
+// 📌 **Chỉnh sửa công việc**
+bot.action(/^edit_(\d+)$/, async (ctx) => {
+    const taskId = ctx.match[1];
+    ctx.reply('✏ Nhập nội dung mới cho công việc:', Markup.forceReply());
+
+    bot.on('text', async (ctx) => {
+        const newTask = ctx.message.text;
+        await db.query('UPDATE tasks SET task = $1 WHERE id = $2', [newTask, taskId]);
+        ctx.reply('✅ Công việc đã được cập nhật!');
+    });
+});
+
+// 📌 **Đặt công việc lặp lại**
+bot.action(/^repeat_(\d+)$/, async (ctx) => {
+    const taskId = ctx.match[1];
+
+    ctx.reply(
+        '🔄 Chọn tần suất lặp lại:',
+        Markup.inlineKeyboard([
+            [Markup.button.callback('📅 Hàng ngày', `repeat_daily_${taskId}`)],
+            [Markup.button.callback('📆 Hàng tuần', `repeat_weekly_${taskId}`)],
+            [Markup.button.callback('📅 Hàng tháng', `repeat_monthly_${taskId}`)]
+        ])
+    );
+});
+
+bot.action(/^repeat_(daily|weekly|monthly)_(\d+)$/, async (ctx) => {
+    const repeatType = ctx.match[1];
+    const taskId = ctx.match[2];
+
+    await db.query('UPDATE tasks SET repeat_interval = $1 WHERE id = $2', [repeatType, taskId]);
+    ctx.reply(`✅ Công việc sẽ lặp lại ${repeatType}!`);
 });
 
 // 📌 **Nhắc nhở công việc lúc 6h sáng hàng ngày**
 schedule.scheduleJob('0 6 * * *', async () => {
-    const result = await db.query('SELECT DISTINCT user_id FROM tasks');
+    const now = new Date();
+    const day = now.getDay(); // 0 = Chủ nhật, 1 = Thứ Hai, ..., 6 = Thứ Bảy
+    const date = now.getDate();
 
-    result.rows.forEach(async (row) => {
-        const userId = row.user_id;
-        const tasks = await db.query('SELECT task FROM tasks WHERE user_id = $1', [userId]);
+    const result = await db.query('SELECT user_id, task, repeat_interval FROM tasks');
 
-        if (tasks.rows.length > 0) {
-            const taskList = tasks.rows.map(t => `- ${t.task}`).join('\n');
-            bot.telegram.sendMessage(userId, `📅 Công việc hôm nay:\n${taskList}`);
+    result.rows.forEach(row => {
+        let sendReminder = false;
+
+        if (row.repeat_interval === 'daily') {
+            sendReminder = true;
+        } else if (row.repeat_interval === 'weekly' && day === 1) { // Nhắc vào Thứ Hai
+            sendReminder = true;
+        } else if (row.repeat_interval === 'monthly' && date === 1) { // Nhắc vào ngày 1 hàng tháng
+            sendReminder = true;
+        }
+
+        if (sendReminder) {
+            bot.telegram.sendMessage(row.user_id, `🔄 Nhắc nhở công việc lặp lại: ${row.task}`);
         }
     });
 });
