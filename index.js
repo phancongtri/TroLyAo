@@ -31,16 +31,18 @@ initDB();
 
 // 📌 **Thêm công việc**
 bot.command('add', (ctx) => {
-    ctx.reply('Nhập nội dung công việc:', Markup.forceReply());
+    ctx.reply('✏ Nhập nội dung công việc:', Markup.forceReply());
 });
 
 bot.on('text', async (ctx) => {
-    const userId = ctx.message.from.id;
-    const taskText = ctx.message.text;
+    if (ctx.message.reply_to_message && ctx.message.reply_to_message.text.includes('Nhập nội dung công việc')) {
+        const userId = ctx.message.from.id;
+        const taskText = ctx.message.text;
 
-    await db.query('INSERT INTO tasks (user_id, task) VALUES ($1, $2)', [userId, taskText]);
+        await db.query('INSERT INTO tasks (user_id, task) VALUES ($1, $2)', [userId, taskText]);
 
-    ctx.reply('✅ Công việc đã được thêm!');
+        ctx.reply('✅ Công việc đã được thêm!');
+    }
 });
 
 // 📌 **Hiển thị danh sách công việc với Inline Keyboard**
@@ -77,9 +79,11 @@ bot.action(/^edit_(\d+)$/, async (ctx) => {
     ctx.reply('✏ Nhập nội dung mới cho công việc:', Markup.forceReply());
 
     bot.on('text', async (ctx) => {
-        const newTask = ctx.message.text;
-        await db.query('UPDATE tasks SET task = $1 WHERE id = $2', [newTask, taskId]);
-        ctx.reply('✅ Công việc đã được cập nhật!');
+        if (ctx.message.reply_to_message && ctx.message.reply_to_message.text.includes('Nhập nội dung mới')) {
+            const newTask = ctx.message.text;
+            await db.query('UPDATE tasks SET task = $1 WHERE id = $2', [newTask, taskId]);
+            ctx.reply('✅ Công việc đã được cập nhật!');
+        }
     });
 });
 
